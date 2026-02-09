@@ -1,0 +1,195 @@
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: admin
+    ports:
+      - "27017:27017"
+    volumes:
+      - .mongo:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    command: mongod --auth --bind_ip_all
+    networks:
+      - search_net
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/admin --quiet -u admin -p password
+      interval: 10s
+      timeout: 10s
+      retries: 5
+  
+  redis:
+    image: redis:7.0-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass redispassword
+    volumes:
+      - .redis:/data
+    networks:
+      - search_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  crawler:
+    build: ./SearchRobot
+    container_name: crawler
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=redispassword
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
+      - MONGO_DATABASE=search_robot
+      - MONGO_USERNAME=scrapy_user
+      - MONGO_PASSWORD=scrapy_password
+      - MONGO_AUTH_SOURCE=search_robot
+      - CONFIG_PATH=/app/config.yaml
+    volumes:
+      - ./SearchRobot/app:/app
+    networks:
+      - search_net
+    command: >
+      sh -c "
+      echo '=== ПОИСКОВЫЙ РОБОТ - КРАУЛЕР ===' &&
+      echo 'Ожидание доступности Redis и MongoDB...' &&
+      sleep 15 &&
+      echo 'Проверка состояния системы...' &&
+      python check_state.py &&
+      echo 'Запуск краулера...' &&
+      python run_robot.py /app/config.yaml
+      "
+
+  api:
+    build: ./SearchRobot
+    container_name: api
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=redispassword
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
+      - MONGO_DATABASE=search_robot
+      - MONGO_USERNAME=scrapy_user
+      - MONGO_PASSWORD=scrapy_password
+      - MONGO_AUTH_SOURCE=search_robot
+      - CONFIG_PATH=/app/config.yaml
+    volumes:
+      - ./SearchRobot/app:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - search_net
+    command: >
+      sh -c "
+      echo '=== ПОИСКОВЫЙ РОБОТ - API СЕРВЕР ===' &&
+      echo 'Ожидание доступности Redis и MongoDB...' &&
+      sleep 20 &&
+      echo 'Запуск API сервера...' &&
+      python api_server.py
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scheduler:
+    build: ./SearchRobot
+    container_name: scheduler
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=redispassword
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
+      - MONGO_DATABASE=search_robot
+      - MONGO_USERNAME=scrapy_user
+      - MONGO_PASSWORD=scrapy_password
+      - MONGO_AUTH_SOURCE=search_robot
+      - CONFIG_PATH=/app/config.yaml
+    volumes:
+      - ./SearchRobot/app:/app
+    networks:
+      - search_net
+    command: >
+      sh -c "
+      echo '=== ПОИСКОВЫЙ РОБОТ - ПЛАНИРОВЩИК ===' &&
+      echo 'Ожидание доступности Redis и MongoDB...' &&
+      sleep 25 &&
+      echo 'Запуск планировщика перепроверки...' &&
+      python run_scheduler.py /app/config.yaml
+      "
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo_express
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: password
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin123
+      ME_CONFIG_MONGODB_URL: mongodb://admin:password@mongo:27017/
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_SITE_BASEURL: "/"
+      ME_CONFIG_OPTIONS_EDITORTHEME: "ambiance"
+    networks:
+      - search_net
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis_commander
+    restart: unless-stopped
+    depends_on:
+      - redis
+    ports:
+      - "8082:8081"
+    environment:
+      REDIS_HOSTS: local:redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redispassword
+      HTTP_USER: admin
+      HTTP_PASSWORD: admin123
+    networks:
+      - search_net
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  search_net:
+    driver: bridge
