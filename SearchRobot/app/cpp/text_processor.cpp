@@ -185,7 +185,7 @@ py::dict process_document(const std::string& raw_text) {
     auto tokens = tokenize_text(raw_text, ENGLISH_STOP_WORDS_DOC, RUSSIAN_STOP_WORDS);
     auto stemmed = stem_tokens(tokens);
     py::dict stats;
-    stats["token_count"] = (int)stemmed.size(); // ← ТОЛЬКО token_count, original_tokens УДАЛЁН
+    stats["token_count"] = (int)stemmed.size();
     return py::dict("terms"_a = stemmed, "stats"_a = stats);
 }
 
@@ -193,7 +193,7 @@ py::dict process_query(const std::string& raw_query) {
     auto tokens = tokenize_text(raw_query, ENGLISH_STOP_WORDS_QUERY, RUSSIAN_STOP_WORDS);
     auto stemmed = stem_tokens(tokens);
     py::dict stats;
-    stats["token_count"] = (int)stemmed.size(); // ← ТОЛЬКО token_count, original_tokens УДАЛЁН
+    stats["token_count"] = (int)stemmed.size();
     return py::dict("terms"_a = stemmed, "stats"_a = stats);
 }
 

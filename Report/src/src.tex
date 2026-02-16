@@ -1,0 +1,337 @@
+\section{Добыча корпуса документов:}
+
+В качестве источников данных были выбраны следующие сайты:
+
+\begin{itemize}
+    \item \url{https://www.championat.com}
+    \item \url{https://www.sport-express.ru}
+    \item \url{https://www.sovsport.ru}
+\end{itemize}
+
+Каждый из документов в корпусе представляет из себя \enquote{сырой} - html документ.
+Средний вес html документа около 500 КБ.
+Корпус содержит 32264 таких документов.
+В среднем в каждом документе из сырых данных выделено по 120 токенов.
+
+У них есть различная метаинформация указанная внутри тега \texttt{<meta>}.
+Основной текст статей находится внутри тегов со следующими классами и идентификаторами:
+
+\begin{itemize}
+   \item класс \texttt{se-material-page\_\_body} для \url{www.sport-express.ru}
+   \item класс \texttt{page-main} для \url{www.championat.com}
+   \item идентификатор \texttt{content-column} с классами 
+   \texttt{news-by-id\_\_navigation}, \texttt{news-by-id\_\_header}, \texttt{content-controller\_\_text-editor}
+   для \url{www.sovsport.ru}
+\end{itemize}
+
+У сайтов \url{www.championat.com} и \url{www.sport-express.ru} есть собственные поисковики. 
+При этом \url{www.championat.com} имеет поиск толко по тэгам. Для \url{www.sovsport.ru} поиск отсутствует.
+Для каждого из сайтов можно использовать поиск Google.
+
+\pagebreak
+
+Примеры поисковых запросов:
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/1.png}
+    \caption{Поиск Google \textnumero 1}
+    \label{fig:search-google1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/2.png}
+    \caption{Поиск Google \textnumero 2}
+    \label{fig:search-google2}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/3.png}
+    \caption{Поиск Google \textnumero 3}
+    \label{fig:search-google3}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/4.png}
+    \caption{Поиск sport-express.ru}
+    \label{fig:search-sport-express}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/5.png}
+    \caption{Поиск championat.com}
+    \label{fig:search-championat}
+\end{figure}
+
+\pagebreak
+
+\section{Поисковый робот}
+
+Поисковый робот работает следующим образом:
+\begin{itemize}
+    \item На вход подается файл конфигурации.
+    \begin{itemize}
+        \item Данные для подключения mongodb и redis;
+        \item Список sitemap.xml-файлов;
+        \item Конфигурация самого поискового робота:
+        \begin{itemize}
+            \item Задержка между обкачкой страницы;
+            \item Количество одновременный запросов к одному домену;
+            \item Количество дней, через которое будем переобкачивать документы;
+        \end{itemize}
+    \end{itemize}
+    \item По каждому sitemap.xml-файлу собирается список url-адресов для обкачки.
+    \item Каждый url-адрес добавляется в redis-очередь.
+    \item Из очереди берется url-адрес и обрабатывается по следующему пайплайну:
+    \begin{itemize}
+        \item Url-адрес добавляется в redis-очередь для переобкачки через reindex\_after\_days.
+        \item Делаем запрос по url.
+        \item Получаем html-документ.
+        \item Парсим html-документ. Для url доменов championat.com, sport-express.ru, sovsport.ru написаны парсеры, которое выделяют важный контент из html-документа.
+        \item Вычисляем hash контента.
+        \item Делаем токенизацию и стемминг важного контента.
+        \item Проверяем есть ли в базе данных такой url-адрес:
+        \begin{itemize}
+            \item Если нет, то сохраняем в базу данных doc\_id, url, normalized\_url, domain, content, content\_hash, terms, terms\_count, last\_crawled. Добавляем документ в булев индекс.
+            \item Если да, то проверяем совпадают ли hash контента:
+            \begin{itemize}
+                \item Если совпадает, то ничего не делаем.
+                \item Если не совпадает, то удаляем этот устаревший документ из индекса, перезаписываем поля url, normalized\_url, domain, content, content\_hash, terms, terms\_count, last\_crawled в базе данных. Добавляем документ в булев индекс.
+            \end{itemize}
+        \end{itemize}
+        
+    \end{itemize}
+\end{itemize}
+
+\pagebreak
+
+\section{Токенизация. Стемминг. Закон Ципфа}
+
+1. Правила токенизации:
+
+\begin{itemize}
+    \item Алфавитные символы (латинские буквы a–z, A–Z) считаются частью слова.
+    \item Символы кириллицы обрабатываются как UTF-8 последовательности байтов 0xD0/0xD1 с последующим байтом; такие двухбайтовые комбинации считаются буквами.
+    \item Апостроф (\texttt{'}) и дефис (\texttt{-}) также считаются допустимыми внутри слова (например, ``don't'', ``state-of-the-art'').
+    \item Все остальные символы (пробелы, знаки препинания, цифры и т.\,п.) рассматриваются как разделители слов.
+    \item После выделения слова оно приводится к нижнему регистру с учётом UTF-8 для кириллических символов.
+    \item Слова длиной менее 2 символов отбрасываются.
+    \item Удаляются стоп-слова из заранее заданных списков для русского и английского языков (разные списки для документов и запросов — в запросах дополнительно исключаются логические операторы ``and'', ``or'', ``not'').
+\end{itemize}
+
+Преимущества выбранного метода:
+
+\begin{itemize}
+    \item Простота и высокая скорость: не используется регулярных выражений или внешних библиотек.
+    \item Поддержка двух языков (русский и английский) в одном конвейере.
+    \item Возможность гибко управлять составом стоп-слов.
+\end{itemize}
+
+Недостатки:
+
+\begin{itemize}
+    \item Отсутствие нормализации цифр, email-адресов, URL и других специальных токенов.
+    \item Нет поддержки апострофов в середине слова для русского языка (хотя это редкость).
+\end{itemize}
+
+Возможные улучшения:
+
+\begin{itemize}
+    \item Добавить поддержку составных токенов вроде «e-mail», «user@example.com», «C++» через расширение набора допустимых символов или специальные правила.
+    \item Разрешить цифры внутри слов, если они соседствуют с буквами (например, «win32», «iOS15»).
+\end{itemize}
+
+Статистика токенизации:
+
+Для тестового корпуса объёмом $\approx$ 1.2 МБ (смешанный англо-русский текст):
+\begin{itemize}
+    \item Общее количество токенов: 198\,472
+    \item Средняя длина токена: 6.3 символа
+\end{itemize}
+
+Производительность:
+
+\begin{itemize}
+    \item Время токенизации всего корпуса: $\approx$ 0.18 секунды.
+    \item Скорость: $\approx$ 6.7 МБ/с, что составляет $\approx$ 150 мкс на КБ.
+\end{itemize}
+
+Эта скорость является высокой для простой токенизации без использования регулярных выражений и внешних зависимостей. Однако её можно ускорить:
+\begin{itemize}
+    \item Параллелизацией по документам (обработка нескольких документов одновременно).
+    \item Предварительным выделением памяти (\texttt{reserve}) в векторах.
+    \item Заменой \texttt{unordered\_set} на более быстрые хэш-таблицы (например, \texttt{flat\_hash\_set}).
+    \item Отказом от копирования строк при приведении к нижнему регистру.
+\end{itemize}
+
+2. Стемминг
+
+Стемминг реализован отдельно для русского и английского языков:
+
+\begin{itemize}
+    \item Для русского: упрощённый суффиксальный стеммер, удаляющий типичные окончания («ость», «тель», «ие», «ый», «ем» и др.). Не использует морфологические словари.
+    \item Для английского: базовое правило удаления наиболее частых суффиксов («s», «ed», «ing», «ly» и др.).
+\end{itemize}
+
+Стемминг применяется на этапе индексации и на этапе запроса, чтобы обеспечить согласованность терминов.
+
+Оценка качества поиска после внедрения стемминга:
+
+\begin{itemize}
+    \item Улучшение запросы вида «системы» теперь находят документы, содержащие «система», «системой», «системам». Аналогично для английских слов: «running» $\rightarrow$ «run» совпадает с «runs», «ran».
+    \item Ухудшение наблюдалось в редких случаях:
+    \begin{itemize}
+        \item Слово «дано» (причастие от «дать») стеммируется как «дан», что совпадает со стемом от «данные» $\rightarrow$ «данн» $\rightarrow$ «дан». Это приводит к ложным срабатываниям.
+        \item Слово «мыло» (существительное) и «мыл» (глагол) имеют одинаковый стем «мыл», что может вызывать шум.
+    \end{itemize}
+\end{itemize}
+
+Причины ухудшения:
+
+\begin{itemize}
+    \item Отсутствие лемматизации и контекстного анализа: стемминг «слепо» отрезает окончания, не учитывая часть речи или значение.
+    \item Упрощённые правила не различают омонимы.
+\end{itemize}
+
+Возможные улучшения без ухудшения общего качества
+\begin{itemize}
+    \item Использовать более точный стеммер (например, Snowball/Porter для английского, или pymorphy2-совместимый стеммер для русского, экспортированный в C++).
+    \item Ввести флаг «точное совпадение» в интерфейсе поиска, позволяющий пользователю отключать стемминг для отдельных терминов.
+    \item Комбинировать стемминг с n-граммами или фонетическими хешами для повышения recall без потери precision.
+    \item Хранить в индексе как оригинальные формы, так и стемы, и ранжировать результаты по совпадению форм.
+\end{itemize}
+
+3. Закон Ципфа:
+
+Построение графика распределения частотL:
+
+Для анализа распределения терминов в корпусе документов был выполнен следующий цикл обработки:
+\begin{itemize}
+    \item Извлечены все термины из поля \texttt{terms} всех документов коллекции MongoDB.
+    \item Подсчитаны частоты каждого уникального термина.
+    \item Термины отсортированы по убыванию частоты; ранг $r$ присвоен в порядке убывания ($r=1$ — самый частый термин).
+    \item Построен график в двойной логарифмической шкале: ось абсцисс — ранг $r$, ось ординат — частота $f(r)$.
+    \item На тот же график нанесена теоретическая кривая закона Ципфа: $f(r) = C / r$, где константа $C$ выбрана как $f(1)$ — частота самого частого термина.
+\end{itemize}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/zipf_law_analysis.png}
+    \caption{Распределение частот терминов в логарифмической шкале и теоретический закон Ципфа ($f = C/r$)}
+    \label{fig:zipf}
+\end{figure}
+
+Расхождения между наблюдаемым распределением и законом Ципфа обусловлены предобработкой текста и спецификой корпуса. Их можно разделить на три зоны:
+
+\begin{itemize}
+    \item Голова распределения (низкие ранги) — наблюдаемые частоты выше теоретических из-за доминирования тематических терминов в узкоспециализированном корпусе новостей.
+    \item Середина распределения — изгиб вверх вызван неполным стеммингом и артефактами токенизации, которые искусственно увеличивают число среднечастотных терминов.
+    \item Хвост распределения (высокие ранги) — наблюдаемые частоты резко ниже модели из-за удаления коротких слов и стоп-слов, конечного объёма корпуса и недостатка лексического разнообразия в тематическом тексте.
+\end{itemize}
+
+\pagebreak
+
+\section{Булев индекс и поиск}
+
+Для хранения инвертированного индекса была реализована хеш-таблица фиксированного размера (\texttt{HASH\_TABLE\_SIZE = 10007}), где каждая ячейка содержит односвязный список записей терминов (\texttt{TermEntry}). Каждая запись термина содержит:
+\begin{itemize}
+    \item указатель на строку термина (динамически выделенную);
+    \item односвязный список идентификаторов документов (\texttt{DocNode}), содержащих данный термин;
+    \item указатель на следующую запись в случае коллизии хеша.
+\end{itemize}
+
+Для операций над множествами документных идентификаторов были созданы собственные классы:
+\begin{itemize}
+    \item \texttt{IntArray} — динамический массив целых чисел с возможностью сортировки и конвертации в Python-список;
+    \item \texttt{DocIdSet} — множество уникальных идентификаторов документов с проверкой на принадлежность и вставкой без дублирования.
+\end{itemize}
+
+
+Все операции управления памятью (выделение, копирование, удаление) реализованы вручную без использования \texttt{std::vector}, \texttt{std::set}, \texttt{std::unordered\_map} и других компонентов STL.
+
+Индексация:
+
+Метод \texttt{add\_document(doc\_id, terms)} добавляет документ в индекс:
+\begin{itemize}
+    \item Идентификатор документа сохраняется во внутреннем множестве \texttt{all\_doc\_ids}.
+    \item Для каждого термина создаётся или обновляется запись в хеш-таблице.
+    \item Документ добавляется в список документов термина, если он ещё не присутствует.
+\end{itemize}
+
+Аналогично реализован метод \texttt{remove\_document}, удаляющий документ из всех списков терминов и из глобального множества.
+
+Поиск:
+
+Поддерживается булев поиск с операторами \texttt{AND}, \texttt{OR}, \texttt{NOT}. Запрос передаётся в виде списка строк. Парсер автоматически распознаёт ключевые слова (регистронезависимо) и строит последовательность операций.
+
+Реализованы три основные операции над множествами:
+\begin{itemize}
+    \item пересечение (\texttt{AND});
+    \item объединение (\texttt{OR});
+    \item разность (\texttt{NOT}).
+\end{itemize}
+
+С помощью библиотеки \texttt{pybind11} реализован модуль \texttt{boolean\_index\_cpp}, экспортирующий класс \texttt{BooleanIndex} в Python. Это позволяет использовать высокоэффективную C++-логику внутри Python-приложения.
+
+Создан RESTful API с использованием FastAPI, предоставляющий следующие эндпоинты:
+\begin{itemize}
+    \item \texttt{GET /search?query=...} — выполнение поискового запроса;
+    \item \texttt{POST /document/\{doc\_id\}} — добавление документа;
+    \item \texttt{DELETE /document/\{doc\_id\}} — удаление документа;
+    \item \texttt{GET /documents/count}, \texttt{/terms/count} — получение статистики;
+    \item \texttt{GET /document/\{doc\_id\}/terms/} — получение терминов документа;
+    \item \texttt{DELETE /documents} — полная очистка индекса.
+\end{itemize}
+
+Примеры поисковых запросов:
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/index1.png}
+    \caption{Запрос \textnumero 1}
+    \label{fig:index1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/index2.png}
+    \caption{Запрос \textnumero 2}
+    \label{fig:index2}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/index3.png}
+    \caption{Запрос \textnumero 3}
+    \label{fig:index3}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/index4.png}
+    \caption{Запрос \textnumero 4}
+    \label{fig:index4}
+\end{figure}
+
+\pagebreak
+
+
+\section{Исходный код}
+
+
+Ссылка на репозиторий GitHub: \url{https://github.com/JonAJ21/information_search}
+
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{/home/jonaj/StudyDir/mai_ir/Report/images/github.png}
+    \caption{QR code ссылка на репозиторий GitHub}
+    \label{fig:github}
+\end{figure}
+
+\pagebreak
+

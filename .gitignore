@@ -1,8 +1,11 @@
-.venv/
-logs/
-*.egg-info
-*.cpython-312-x86_64-linux-gnu.so
+.venv
+uv.lock
 __pycache__
-
 .mongo
 .redis
+
+report.log
+report.out
+report.aux
+
+*.so
